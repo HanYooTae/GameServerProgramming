@@ -1,2 +1,1 @@
-﻿  UserManager.cpp
-  GameServer.vcxproj -> D:\ServerProgramming\GameServerProgramming\Binary\Debug\GameServer.exe
+﻿LINK : fatal error LNK1104: cannot open file 'Debug\ServerCore.lib'
