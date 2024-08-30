@@ -4,84 +4,68 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <windows.h>
 
-class SpinLock
+mutex m;
+queue<int32> q;
+HANDLE handle;
+
+void Producer()
 {
-public:
-    void lock()
+    while (true)
     {
-        // CAS (Compare-And-Swap) : 한방에 실행하게끔 atomic으로 묶어주는 일련의 함수
-
-        bool expected = false;  // _locked가 무엇인지 예상
-        bool desired = true;
-
-        // CAS 의사코드
-        /*if (_locked == expected)
-        {
-            expected = _locked;
-            _locked = desired;
-            return true;
-        }
-        else
-        {
-            expected = _locked;
-            return false;
-        }*/
-
-        // 실패했다면 성공할 때까지 실행하겠다.
-        while (_locked.compare_exchange_strong(expected, desired) == false)
-        {
-            // compare_exchange_strong의 첫 번째 파라미터는 레퍼런스로 받기 때문에 값이 계속해서 바뀜. 그래서 첫 번째 파라미터는 초기화를 시켜줘야 함.
-            expected = false;
-        }
-
-        /*while (_locked)
-        {
-
-        }
-
-        _locked = true;*/
+        // 데이터를 밀어넣고 있음
+        unique_lock<mutex> lock(m);
+        q.push(100);
     }
 
-    void unlock()
-    {
-        //_locked = false;
-        _locked.store(false);
-    }
-
-private:
-    //volatile bool _locked = false;
-    atomic<bool> _locked = false;
-};
-
-int32 sum = 0;
-SpinLock spinLock;
-
-void Add()
-{
-    for (int32 i = 0; i < 10'0000; i++)
-    {
-        lock_guard<SpinLock> guard(spinLock);
-        sum++;
-    }
+    // 같은 식별자에 해당하는 커널 오브젝트를 Signal 상태로 변경(켜주는 것)
+    ::SetEvent(handle);
+    this_thread::sleep_for(100000ms);
 }
 
-void Sub()
+void Consumer()
 {
-    for (int32 i = 0; i < 10'0000; i++)
+    // 데이터를 꺼내 쓰고 있음
+    while (true)
     {
-        lock_guard<SpinLock> guard(spinLock);
-        sum--;
+        // 커널 오브젝트가 무한 대기하도록
+        // Signal 상태라면 계속 진행
+        // Non - Signal 상태라면 대기
+        // 제 3자를 통해 무의미하게 대기하는 것을 방지해준 모습
+        ::WaitForSingleObject(handle, INFINITE);
+
+        unique_lock<mutex> lock(m);
+        if (!q.empty())
+        {
+            int32 data = q.front();
+            q.pop();
+            cout << data << '\n';
+        }
     }
 }
 
 int main()
 {
-    thread t1(Add);
-    thread t2(Sub);
+    // Kernel Object
+    // 커널 오브젝트를 관리하기 위해서 할당되는 메모리
+
+    // 커널 오브젝트의 속성
+    // 1. Usage Count : 오브젝트를 몇명이 사용하고 있는지
+    // 2. Signal(파란불) / Non - Signal(빨간불) : boolean을 사용하여 켜져있으면 Signal, 꺼져있으면 Non - Signal
+    // 3. Auto / Manual : 자동인지 수동인지
+    // CreateEvent는 커널 오브젝트들 중에서 상대적으로 가벼운 편이다.
+    handle = ::CreateEvent(NULL/*보안속성*/, FALSE/*bManualReset*/, FALSE/*bInitialState*/, NULL);
+
+    // handle은 어떤 이벤트인지 구별하는 식별자가 저장이 됨.
+    // 커널 딴에서 어떤 이벤트를 사용하고 싶을 때, 몇번 식별자의 이벤트는 무엇을 해주세요 라고 명령을 할 때 handle을 사용함
+
+    thread t1(Producer);
+    thread t2(Consumer);
 
     t1.join();
     t2.join();
 
-    cout << sum << '\n';
+    // 핸들을 닫아주는 함수
+    ::CloseHandle(handle);
 }
