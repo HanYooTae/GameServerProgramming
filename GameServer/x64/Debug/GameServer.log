@@ -1,1 +1,2 @@
-﻿LINK : fatal error LNK1104: cannot open file 'Debug\ServerCore.lib'
+﻿  GameServer.cpp
+  GameServer.vcxproj -> D:\ServerProgramming\GameServerProgramming\Binary\Debug\GameServer.exe
