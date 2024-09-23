@@ -7,86 +7,80 @@
 #include <mutex>
 #include <future>
 
-// 캐시가 개입
-/*
-    Thread_1과 Thread_2함수 안에서 r1과 r2가 메모리에 있는 값을 불러왔다는 보장이 없다.
-*/
+// atomic 연산은 모든 쓰레드가 동일 객체에 대해서 동일한 수정 순서를 관찰한다.
 
-/*
-    (상황1) 한쪽에서 y의 값을 수정 (y = 1)
-    (상황2) 다른 한쪽에서 y의 값을 꺼내서 읽음 (r2 = y)
+atomic<int64> num;
+// 동일한 수정 순서
+// 변경되는 값들의 순서대로 진행이 되는 것을 의미한다. 시간의 흐름을 거스를 순 없다.
+// 변수의 값이 0 -> 2 -> 1 -> 5 순서대로 변경된다고 해보자.
+//현재 변수의 값이 1로 수정이 되어도, 다른 쓰레드 입장에서는 캐시 등 여러 가지 문제가 얽혀있기 때문에 당장 1이라는 값을 보지 못하고 이전 값인 2를 관찰할 수도 있다.
 
-    1. 캐시가 개입
-    2. y의 값을 RAM에 가서 수정했다는 보장이 없음
-    3. r2가 y의 메모리를 불러왔다는 보장도 없음
-*/
 
-/*
-    ** 가시성 문제 **
-    
-    1. 멀티 쓰레드 프로그래밍이 아닌 경우라면 전혀 상관이 없다.
-    2. 단일 쓰레드라면 값을 수정했을 때, 사용하던 캐시에 수정된 값이 저장이 되어있기 때문에 상관이 없다.
-    3. 다수의 쓰레드가 개입을 하는 순간, 문제가 발생할 가능성이 생긴다.
-     ㄴ y에 1을 대입했는데, r2는 수정된 y가 아닌 수정되기 전의 y를 읽을 수도 있음.(가시성)
-     ㄴ 만약 C++이 아니라 C#이었다면, 공용 변수들 모두 volatile 키워드를 붙이면 컴파일러 최적화도 막고 가시성 문제도 해결이 되긴 하지만, 코드 재배치의 문제는 해결이 되지 않는다.
+// CPU가 한 번에 처리할 수 있는 연산을 원자적인 연산이라고 한다.
+// 여러 단계로 쪼개서 실행해야 하는 연산을 원자적이지 않은 연산이라고 한다.
+// atomic의 is_lock_free() 멤버함수를 통해 원자적으로 처리가 가능하도록 지원하는지 아닌지를 체크할 수 있다. 지원하지 않으면 atomic 클래스에 의해 원자성을 부여받는다.
 
-     ** 코드 재배치 문제 **
-     
-     1. 코드를 작성했는데, 컴파일러가 같은 결과물이면서 코드의 순서를 뒤바꾸는게 더 효율적이라고 판단한다면 코드의 순서를 임의로 변경할 수도 있다.
-     2. 컴파일러가 순서를 뒤집지 않더라도, CPU가 순서를 뒤집을 수도 있다.
-     2-1. CPU의 파이프라인 : Fetch(명령어 가져오기), Decode(명령어 해석), Execute(명령어 실행), Write-back(결과물을 가져다주기)
-     2-2. 명령어를 해석하고 실행하는 과정에서 순서를 뒤바꾸는 것이 더 효율적이라고 컴파일러 또는 CPU가 인식은 하게 된다면 순서를 뒤바꾸는 것이다.
-*/
+atomic<int64> num1;
+atomic<int64> num2;
+// 동일한 객체
+// num1과 num2은 서로에게 아무런 영향을 미치지 않는다.
+// num1과 num2를 같이 수정할 경우에, 순서가 엎치락 뒤치락할 수 있다.
 
-// 가시성, 코드 재배치
-int32 x = 0;
-int32 y = 0;
-int32 r1 = 0;
-int32 r2 = 0;
+atomic<bool> flag;
 
-volatile bool ready;
-
-void Thread_1()
-{
-    while (!ready);
-
-    y = 1;  // Store y
-    r1 = x; // Load x
-}
-
-void Thread_2()
-{
-    while (!ready);
-
-    x = 1;  // Store x
-    r2 = y; // Load y
-}
 
 int main()
 {
-    int32 count = 0;
+    //flag = true;
+    flag.store(true, memory_order::memory_order_seq_cst);
 
-    while (true)
+    //bool val = flag;
+    bool val = flag.load(memory_order::memory_order_seq_cst);
+
+    // 이전 flag값을 prev에 넣고, flag값을 수정
     {
-        ready = false;
-        count++;
+        // flag의 이전 값을 꺼내서 prev에 저장했을 수 있다고 생각할 수 있지만,
+        // 만약 다른 쓰레드에서 flag에 접근해서 수정하는 상황이 있다면 prev의 값이 더이상 유효하지 않는다.
+        //bool prev = flag;
+        //flag = true;
 
-        x = y = r1 = r2 = 0;
-
-        thread t1(Thread_1);
-        thread t2(Thread_2);
-
-        ready = true;
-
-        t1.join();
-        t2.join();
-
-        if (r1 == 0 && r2 == 0) break;
-
-        //cout << count << '\n';
+        // exchange에서 리턴해주는 값이 flag의 이전 값을 의미
+        bool prev = flag.exchange(true);
     }
-    
-    cout << count << "번 만에 빠져나옴" << '\n';
+
+    // CAS (Compare-And-Swap) 조건부 수정
+    {
+        bool expected = false;
+        bool desired = true;
+
+        flag.compare_exchange_strong(expected, desired);
+        
+        if (flag == expected)
+        {
+            flag = desired;
+            return true;
+        }
+        else
+        {
+            expected = flag;
+            return false;
+        }
+
+        // compare_exchange_strong과 유사하지만, Spirious Failure라는 상황이 발생할 수 있다는 차이점이 존재한다.
+        // 다른 쓰레드의 Interruption을 받아서 중간에 실패할 수 있음.
+        // 원래는 compare_exchange_weak를 일반적으로 사용하지만, 하드웨어에 따라 Spirious Failure가 발생할 수 있다.
+
+        // compare_exchange_strong는 Spirious Failure가 일어나더라도 다시 정상적인 값을 리턴하는 상황이 될 때까지 반복을 해준다.
+        // 사용하는 머신에 따라서 compare_exchange_strong이 조금 더 무거울 수 있다.
+
+        // compare_exchange_weak를 사용하려면 Spirious Failure가 발생하더라도, 될 때까지 무한루프를 돌려주는게 일반적이다.
+        /*while (true)
+        {
+            bool expected = false;
+            bool desired = true;
+            flag.compare_exchange_weak(expected, desired);
+        }*/
+    }
 
     return 0;
 }
